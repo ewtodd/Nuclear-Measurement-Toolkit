@@ -71,15 +71,16 @@ Bool_t CalibrationUtils::FitAllPeaks() {
   for (size_t i = 0; i < peaks_.size(); ++i) {
     CalibrationPeak &peak = peaks_[i];
     std::cout << "Fitting peak " << (i + 1) << "/" << peaks_.size() << ": "
-              << peak.isotope << " (" << peak.deposited_energy_kev << " keV)"
-              << " using source_id " << peak.source_id << std::endl;
+              << peak.calibration_source_ << " (" << peak.deposited_energy_keV_
+              << " keV)"
+              << " using source_id " << peak.source_id_ << std::endl;
 
     // Use the specific source for this peak
-    Bool_t fit_result = FitSinglePeak(peak, peak.source_id);
+    Bool_t fit_result = FitSinglePeak(peak, peak.source_id_);
 
     if (fit_result) {
-      std::cout << " SUCCESS: Position = " << peak.fitted_position << " ± "
-                << peak.fitted_position_error << ", FWHM = " << peak.fitted_fwhm
+      std::cout << " SUCCESS: Position = " << peak.fit_position_ << " +/- "
+                << peak.fit_position_error_ << ", SIGMA = " << peak.fit_sigma_
                 << std::endl;
     } else {
       std::cout << " FAILED: Could not fit peak" << std::endl;
@@ -100,40 +101,22 @@ Bool_t CalibrationUtils::FitSinglePeak(CalibrationPeak &peak, Int_t source_id) {
 
   TH1F *hist = it->second;
 
-  // Create fit function with Gaussian + background + power law tail
+  // Create fit function with Gaussian + background
   TF1 *fit_func = nullptr;
 
-  fit_func =
-      new TF1("gauss_plus_bkg_tail",
-              "[0]*exp(-0.5*((x-[1])/[2])^2) + [3] + [4]*x + [5]*pow(x, -[6])",
-              peak.fit_range_low, peak.fit_range_high);
+  fit_func = new TF1("gauss_plus_bkg_tail",
+                     "[0]*exp(-0.5*((x-[1])/[2])^2) + [3] + [4]*x)",
+                     peak.fit_range_low_, peak.fit_range_high_);
 
-  // fit_func->SetParLimits(2, peak.expected_sigma - 500,
-  //                       peak.expected_sigma + 500);
-
-  if (source_id == 0) {
-    fit_func->SetParLimits(1, peak.expected_integral - 100,
-                           peak.expected_integral + 100);
-    fit_func->SetParLimits(4, -10, 10);
-    fit_func->SetParLimits(3, 0, 1e6);
-    fit_func->SetParLimits(5, 0, 1e6);
-    fit_func->SetParLimits(6, -10, 10);
-    // fit_func->SetParLimits(0, peak.expected_amplitude - 10000,
-    //                       peak.expected_amplitude + 10000);
-
-  } else {
-    fit_func->SetParLimits(1, peak.expected_integral - 500,
-                           peak.expected_integral + 500);
-    fit_func->SetParLimits(3, 0, peak.expected_background + 500);
-    fit_func->SetParLimits(4, -10, 0);
-    fit_func->SetParLimits(0, peak.expected_amplitude - 10000,
-                           peak.expected_amplitude + 10000);
-    fit_func->SetParLimits(5, -1e-5, 1e-5);
-    fit_func->SetParLimits(6, -1e-5, 1e-5);
-  }
+  fit_func->SetParLimits(1, peak.guess_peak_mu_ - 500,
+                         peak.guess_peak_mu_ + 500);
+  fit_func->SetParLimits(3, 0, peak.guess_bkg_const_ + 500);
+  fit_func->SetParLimits(4, -10, peak.guess_bkg_slope_);
+  fit_func->SetParLimits(0, peak.expected_amplitude - 10000,
+                         peak.expected_amplitude + 10000);
 
   // Set initial parameters (now 7 parameters instead of 5)
-  fit_func->SetParameters(peak.expected_amplitude, peak.expected_integral,
+  fit_func->SetParameters(peak.expected_amplitude, peak.guess_peak_mu_,
                           peak.expected_sigma, peak.expected_background, -0.01,
                           peak.expected_amplitude * 0.1, 2.0);
 
@@ -143,9 +126,6 @@ Bool_t CalibrationUtils::FitSinglePeak(CalibrationPeak &peak, Int_t source_id) {
   fit_func->SetParName(2, "Sigma");
   fit_func->SetParName(3, "Bkg_Const");
   fit_func->SetParName(4, "Bkg_Slope");
-  fit_func->SetParName(5, "PowerLaw_Amp");
-  fit_func->SetParName(6, "PowerLaw_Exp");
-
   // Perform fit
   TFitResultPtr fit_result = hist->Fit(fit_func, "LSRN+");
 
@@ -157,10 +137,6 @@ Bool_t CalibrationUtils::FitSinglePeak(CalibrationPeak &peak, Int_t source_id) {
     peak.fitted_amplitude = fit_func->GetParameter(0);
     peak.fitted_bkg_const = fit_func->GetParameter(3);
     peak.fitted_bkg_slope = fit_func->GetParameter(4);
-
-    // Store power law parameters (you may need to add these to CalibrationPeak)
-    peak.fitted_powerlaw_amp = fit_func->GetParameter(5);
-    peak.fitted_powerlaw_exp = fit_func->GetParameter(6);
 
     peak.fit_successful = kTRUE;
     delete fit_func;
